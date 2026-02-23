@@ -55,12 +55,12 @@
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all();\n\n// Zbierz wszystkie newsy\nconst newsLines = items.map(item => {\n  const date = item.json.pubDate \n    ? new Date(item.json.pubDate).toLocaleString('pl-PL', {\n        day: '2-digit', month: '2-digit', \n        hour: '2-digit', minute: '2-digit'\n      })\n    : 'brak daty';\n  \n  const title = item.json.title || 'brak tytułu';\n  const link = item.json.link || '#';\n  \n  return `<tr>\n    <td style=\"padding:4px 8px; color:#888; white-space:nowrap; font-size:12px;\">${date}</td>\n    <td style=\"padding:4px 8px;\"><a href=\"${link}\" style=\"color:#2980b9; text-decoration:none;\">${title}</a></td>\n  </tr>`;\n}).join('');\n\nconst html = `\n<html><body style=\"font-family: Arial, sans-serif; max-width: 700px; margin: auto; color: #333;\">\n  <h2 style=\"border-bottom: 2px solid #2980b9; padding-bottom: 8px;\">\n    📰 Newsy GPW — ${new Date().toLocaleDateString('pl-PL', {\n      weekday: 'long', day: 'numeric', month: 'long'\n    })}\n  </h2>\n  <p style=\"color:#888; font-size:13px;\">\n    Pobrano: ${items.length} newsów | \n    Źródła: Bankier ESPI, Bankier Giełda\n  </p>\n  <table style=\"width:100%; border-collapse:collapse;\">\n    <thead>\n      <tr style=\"background:#f5f5f5;\">\n        <th style=\"padding:6px 8px; text-align:left; font-size:12px;\">Data</th>\n        <th style=\"padding:6px 8px; text-align:left; font-size:12px;\">Tytuł</th>\n      </tr>\n    </thead>\n    <tbody>\n      ${newsLines}\n    </tbody>\n  </table>\n  <hr style=\"margin-top:20px;\">\n  <p style=\"color:#aaa; font-size:11px;\">\n    Wygenerowano automatycznie przez n8n | Etap 1 (bez filtrowania AI)\n  </p>\n</body></html>\n`;\n\nreturn [{ json: { html, count: items.length } }];"
+        "jsCode": "const items = $input.all();\n\nif (items.length === 0) {\n  return [{ json: { \n    html: '<p>Brak newsów dotyczących portfolio i makro.</p>', \n    count: 0 \n  }}];\n}\n\n// Pogrupuj newsy\nconst spolki = items.filter(i => i.json._category === 'SPOLKA');\nconst makro  = items.filter(i => i.json._category === 'MAKRO');\n\nconst renderRow = (item) => {\n  const date = item.json.pubDate\n    ? new Date(item.json.pubDate).toLocaleString('pl-PL', {\n        day: '2-digit', month: '2-digit',\n        hour: '2-digit', minute: '2-digit'\n      })\n    : '';\n  const title  = item.json.title || 'brak tytułu';\n  const link   = item.json.link || '#';\n  const ticker = item.json._ticker || '';\n\n  return `<tr>\n    <td style=\"padding:4px 8px; color:#888; font-size:12px; white-space:nowrap;\">${date}</td>\n    <td style=\"padding:4px 8px;\">\n      <span style=\"background:#2980b9; color:white; border-radius:3px; padding:1px 5px; font-size:11px; margin-right:6px;\">${ticker}</span>\n      <a href=\"${link}\" style=\"color:#2c3e50; text-decoration:none;\">${title}</a>\n    </td>\n  </tr>`;\n};\n\nconst spolkiRows = spolki.map(renderRow).join('');\nconst makroRows  = makro.map(renderRow).join('');\n\nconst html = `\n<html><body style=\"font-family:Arial,sans-serif; max-width:700px; margin:auto; color:#333;\">\n\n  <h2 style=\"border-bottom:2px solid #2980b9; padding-bottom:8px;\">\n    📊 Newsy GPW — ${new Date().toLocaleDateString('pl-PL', {\n      weekday:'long', day:'numeric', month:'long'\n    })}\n  </h2>\n  <p style=\"color:#888; font-size:13px;\">\n    Spółki: ${spolki.length} newsów &nbsp;|&nbsp; Makro: ${makro.length} newsów\n  </p>\n\n  ${spolki.length > 0 ? `\n  <h3 style=\"color:#2c3e50; margin-top:20px;\">🏢 Twoje spółki</h3>\n  <table style=\"width:100%; border-collapse:collapse;\">\n    <tbody>${spolkiRows}</tbody>\n  </table>` : '<p style=\"color:#aaa;\">Brak newsów dla spółek z portfolio.</p>'}\n\n  ${makro.length > 0 ? `\n  <h3 style=\"color:#7f8c8d; margin-top:24px;\">🌍 Makroekonomia</h3>\n  <table style=\"width:100%; border-collapse:collapse;\">\n    <tbody>${makroRows}</tbody>\n  </table>` : ''}\n\n  <hr style=\"margin-top:20px;\">\n  <p style=\"color:#aaa; font-size:11px;\">\n    n8n GPW Agent v2.0 | Etap 2 — filtrowanie po portfolio i makro\n  </p>\n</body></html>\n`;\n\nreturn [{ json: { html, count: items.length, spolki: spolki.length, makro: makro.length } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        672,
+        880,
         -32
       ],
       "id": "2c9b17d0-eab4-4c9d-b889-d5a99d76788c",
@@ -69,14 +69,14 @@
     {
       "parameters": {
         "sendTo": "jacek.maszota@gmail.com",
-        "subject": "=Newsy GPW - {{ $now.format('dd.MM.yyyy HH:mm') }} ({{ $json.count }} newsów)",
+        "subject": "=📊 GPW [{{ $json.spolki }}s + {{ $json.makro }}m] - {{ $now.format('dd.MM HH:mm') }}",
         "message": "={{ $json.html }}",
         "options": {}
       },
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.2,
       "position": [
-        896,
+        1104,
         -32
       ],
       "id": "255f3a49-ab37-4311-8358-217a8741369e",
@@ -88,6 +88,19 @@
           "name": "Gmail account"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// TWOJE PORTFOLIO — dostosuj nazwy do swoich spółek\n// Każda spółka ma listę słów kluczowych które\n// mogą pojawić się w tytule newsa\n// ============================================\nconst PORTFOLIO = [\n  { ticker: 'ICE',  keywords: ['Medinice', 'ICE', 'medinice'] },\n  { ticker: 'OPL',  keywords: ['Orange Polska', 'Orange PL', 'OPL'] },\n  { ticker: 'PKN',  keywords: ['PKN', 'Orlen', 'ORLEN', 'PKN ORLEN'] },\n  { ticker: 'KGH',  keywords: ['KGHM', 'KGH', 'Polska Miedź'] },\n  { ticker: 'JSW',  keywords: ['JSW', 'Jastrzębska', 'Jastrzebska'] },\n  // Dodaj pozostałe spółki z Twojego portfolio:\n  { ticker: 'LBW',  keywords: ['Lubawa', 'LBW'] },\n  { ticker: 'MLR',  keywords: ['Molecure', 'MLR'] },\n  { ticker: 'ENA',  keywords: ['Enea', 'ENA'] },\n  { ticker: 'PGE',  keywords: ['PGE'] },\n  { ticker: 'TRK',  keywords: ['Trakcja', 'TRK'] },\n  { ticker: 'DVL',  keywords: ['Develia', 'DVL'] },\n  { ticker: 'CPT',  keywords: ['Captor', 'CPT'] },\n  { ticker: 'ALR',  keywords: ['Alior', 'ALR'] },\n  { ticker: 'CRE',  keywords: ['Creotech', 'CRE'] },\n  { ticker: 'PZU',  keywords: ['PZU'] },\n  { ticker: 'ATT',  keywords: ['Azoty', 'ATT', 'Grupa Azoty'] },\n];\n\n// ============================================\n// MAKRO — newsy które zawsze przepuszczamy\n// niezależnie od spółki\n// ============================================\nconst MAKRO_KEYWORDS = [\n  'RPP', 'stopy procentowe', 'stopa procentowa',\n  'inflacja', 'CPI', 'GUS', 'NBP',\n  'Fed', 'Federal Reserve', 'EBC', 'ECB',\n  'PKB', 'GDP', 'bezrobocie',\n  'cła', 'taryfy', 'Trump',\n  'recesja', 'stagflacja',\n  'WIG20', 'WIG', 'GPW sesja',\n];\n\n// ============================================\n// LOGIKA FILTROWANIA\n// ============================================\nconst items = $input.all();\nconst result = [];\n\nfor (const item of items) {\n  const title = (item.json.title || '').toLowerCase();\n  const desc  = (item.json.content || item.json.description || '').toLowerCase();\n  const text  = title + ' ' + desc;\n\n  // Sprawdź czy news dotyczy spółki z portfolio\n  let matchedTicker = null;\n  for (const stock of PORTFOLIO) {\n    if (stock.keywords.some(kw => text.includes(kw.toLowerCase()))) {\n      matchedTicker = stock.ticker;\n      break;\n    }\n  }\n\n  // Sprawdź czy to news makro\n  const isMakro = MAKRO_KEYWORDS.some(kw => text.includes(kw.toLowerCase()));\n\n  // Przepuść tylko jeśli pasuje do spółki LUB jest makro\n  if (matchedTicker || isMakro) {\n    result.push({\n      json: {\n        ...item.json,\n        _ticker: matchedTicker || 'MAKRO',\n        _category: matchedTicker ? 'SPOLKA' : 'MAKRO',\n      }\n    });\n  }\n}\n\n// Posortuj: najpierw spółki, potem makro\nresult.sort((a, b) => {\n  if (a.json._category === b.json._category) return 0;\n  return a.json._category === 'SPOLKA' ? -1 : 1;\n});\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        -32
+      ],
+      "id": "79599397-3b55-4698-b1fa-d8e57834d1e4",
+      "name": "Filtr spółek i makro"
     }
   ],
   "pinData": {},
@@ -134,7 +147,7 @@
       "main": [
         [
           {
-            "node": "Formatowanie dla emaila",
+            "node": "Filtr spółek i makro",
             "type": "main",
             "index": 0
           }
@@ -151,6 +164,17 @@
           }
         ]
       ]
+    },
+    "Filtr spółek i makro": {
+      "main": [
+        [
+          {
+            "node": "Formatowanie dla emaila",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
@@ -159,7 +183,7 @@
     "binaryMode": "separate",
     "availableInMCP": false
   },
-  "versionId": "968cd7b9-d0bf-4220-aba8-abd6fa257cbb",
+  "versionId": "b8401858-0c3f-43ac-a153-ca5a2e270d1d",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "aa47a6072b31783d110737f20a24e70688ccc8dc522cf419aa8d709d2bd88407"
