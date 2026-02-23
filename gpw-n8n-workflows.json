@@ -1,0 +1,169 @@
+{
+  "name": "gpw-n8n-workflows",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -32
+      ],
+      "id": "cd5864dd-8277-4205-8880-eda52d46a54f",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "url": "https://www.bankier.pl/rss/espi.xml",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        224,
+        -128
+      ],
+      "id": "2ae89f2b-0015-4661-afde-fa509eaec6f2",
+      "name": "RSS Feed: Bankier ESPI"
+    },
+    {
+      "parameters": {
+        "url": "https://www.bankier.pl/rss/gielda.xml",
+        "options": {
+          "customFields": ""
+        }
+      },
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        224,
+        64
+      ],
+      "id": "ad6ac53f-3ea7-41ce-8fa6-997e25f05743",
+      "name": "RSS Feed: Bankier Giełda"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        448,
+        -32
+      ],
+      "id": "558079a9-4c4d-45ea-b908-b52cbeba0762",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// Zbierz wszystkie newsy\nconst newsLines = items.map(item => {\n  const date = item.json.pubDate \n    ? new Date(item.json.pubDate).toLocaleString('pl-PL', {\n        day: '2-digit', month: '2-digit', \n        hour: '2-digit', minute: '2-digit'\n      })\n    : 'brak daty';\n  \n  const title = item.json.title || 'brak tytułu';\n  const link = item.json.link || '#';\n  \n  return `<tr>\n    <td style=\"padding:4px 8px; color:#888; white-space:nowrap; font-size:12px;\">${date}</td>\n    <td style=\"padding:4px 8px;\"><a href=\"${link}\" style=\"color:#2980b9; text-decoration:none;\">${title}</a></td>\n  </tr>`;\n}).join('');\n\nconst html = `\n<html><body style=\"font-family: Arial, sans-serif; max-width: 700px; margin: auto; color: #333;\">\n  <h2 style=\"border-bottom: 2px solid #2980b9; padding-bottom: 8px;\">\n    📰 Newsy GPW — ${new Date().toLocaleDateString('pl-PL', {\n      weekday: 'long', day: 'numeric', month: 'long'\n    })}\n  </h2>\n  <p style=\"color:#888; font-size:13px;\">\n    Pobrano: ${items.length} newsów | \n    Źródła: Bankier ESPI, Bankier Giełda\n  </p>\n  <table style=\"width:100%; border-collapse:collapse;\">\n    <thead>\n      <tr style=\"background:#f5f5f5;\">\n        <th style=\"padding:6px 8px; text-align:left; font-size:12px;\">Data</th>\n        <th style=\"padding:6px 8px; text-align:left; font-size:12px;\">Tytuł</th>\n      </tr>\n    </thead>\n    <tbody>\n      ${newsLines}\n    </tbody>\n  </table>\n  <hr style=\"margin-top:20px;\">\n  <p style=\"color:#aaa; font-size:11px;\">\n    Wygenerowano automatycznie przez n8n | Etap 1 (bez filtrowania AI)\n  </p>\n</body></html>\n`;\n\nreturn [{ json: { html, count: items.length } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        -32
+      ],
+      "id": "2c9b17d0-eab4-4c9d-b889-d5a99d76788c",
+      "name": "Formatowanie dla emaila"
+    },
+    {
+      "parameters": {
+        "sendTo": "jacek.maszota@gmail.com",
+        "subject": "=Newsy GPW - {{ $now.format('dd.MM.yyyy HH:mm') }} ({{ $json.count }} newsów)",
+        "message": "={{ $json.html }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        -32
+      ],
+      "id": "255f3a49-ab37-4311-8358-217a8741369e",
+      "name": "Send a message",
+      "webhookId": "477c7504-c9cf-4e05-ab71-1f4dd2483321",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "FDzHFgkF7UtF1zFW",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "RSS Feed: Bankier ESPI",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RSS Feed: Bankier Giełda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS Feed: Bankier ESPI": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS Feed: Bankier Giełda": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Formatowanie dla emaila",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatowanie dla emaila": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "968cd7b9-d0bf-4220-aba8-abd6fa257cbb",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "aa47a6072b31783d110737f20a24e70688ccc8dc522cf419aa8d709d2bd88407"
+  },
+  "id": "fEHsQelHIxiXw5eB",
+  "tags": []
+}
