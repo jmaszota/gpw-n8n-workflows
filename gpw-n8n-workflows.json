@@ -2,17 +2,6 @@
   "name": "gpw-n8n-workflows",
   "nodes": [
     {
-      "parameters": {},
-      "type": "n8n-nodes-base.manualTrigger",
-      "typeVersion": 1,
-      "position": [
-        0,
-        -32
-      ],
-      "id": "cd5864dd-8277-4205-8880-eda52d46a54f",
-      "name": "When clicking ‘Execute workflow’"
-    },
-    {
       "parameters": {
         "url": "https://www.bankier.pl/rss/espi.xml",
         "options": {}
@@ -20,7 +9,7 @@
       "type": "n8n-nodes-base.rssFeedRead",
       "typeVersion": 1.2,
       "position": [
-        224,
+        656,
         -128
       ],
       "id": "2ae89f2b-0015-4661-afde-fa509eaec6f2",
@@ -36,32 +25,34 @@
       "type": "n8n-nodes-base.rssFeedRead",
       "typeVersion": 1.2,
       "position": [
-        224,
+        656,
         64
       ],
       "id": "ad6ac53f-3ea7-41ce-8fa6-997e25f05743",
       "name": "RSS Feed: Bankier Giełda"
     },
     {
-      "parameters": {},
+      "parameters": {
+        "numberInputs": 3
+      },
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3.2,
       "position": [
-        448,
-        -32
+        880,
+        48
       ],
       "id": "558079a9-4c4d-45ea-b908-b52cbeba0762",
       "name": "Merge"
     },
     {
       "parameters": {
-        "jsCode": "// Pobierz oryginalną listę newsów\nconst input = $input.first().json;\nconst claudeRaw = input.claudeResponse;\nconst origItems = input.originalItems;\n\n// Pobierz analizę Claude\nlet analysis = [];\n\ntry {\n  // Claude zwraca content jako tablicę — wyciągamy tekst\n  const rawText = claudeRaw.content?.[0]?.text || '[]';\n  // Usuń ewentualne backticki gdyby Claude jednak dodał markdown\n  const cleaned = rawText.replace(/```json|```/g, '').trim();\n  analysis = JSON.parse(cleaned);\n} catch(e) {\n  // Jeśli parsowanie padnie — kontynuuj bez sentymentu\n  analysis = [];\n}\n\n// Stwórz mapę: id → analiza (id w Claude zaczyna się od 1)\nconst analysisMap = {};\nfor (const a of analysis) {\n  analysisMap[a.id] = a;\n}\n\n// Stałe wizualne\nconst sentimentIcon = { BULLISH: '📈', BEARISH: '📉', NEUTRAL: '➡️' };\nconst importanceDot = { HIGH: '🔴', MEDIUM: '🟡', LOW: '⚪' };\nconst tickerColor   = '#2980b9';\n\n// Podziel na kategorie\nconst highItems  = origItems.filter((_, i) => analysisMap[i+1]?.importance === 'HIGH');\nconst spolkiRest = origItems.filter((item, i) => \n  item._category === 'SPOLKA' && analysisMap[i+1]?.importance !== 'HIGH'\n);\nconst makroItems = origItems.filter((item, i) => \n  item._category === 'MAKRO' && analysisMap[i+1]?.importance !== 'HIGH'\n);\n\nconst renderRow = (item, idx) => {\n  const a       = analysisMap[idx + 1] || {};\n  const date    = item.pubDate\n    ? new Date(item.pubDate).toLocaleString('pl-PL', {\n        day: '2-digit', month: '2-digit',\n        hour: '2-digit', minute: '2-digit'\n      })\n    : '';\n  const ticker  = item._ticker || '';\n  const title   = item.title || '';\n  const link    = item.link || '#';\n  const icon    = sentimentIcon[a.sentiment] || '➡️';\n  const dot     = importanceDot[a.importance] || '⚪';\n  const reason  = a.reason || '';\n\n  return `<tr style=\"border-bottom:1px solid #f0f0f0;\">\n    <td style=\"padding:6px 8px; color:#999; font-size:11px; white-space:nowrap; vertical-align:top;\">${date}</td>\n    <td style=\"padding:6px 8px; vertical-align:top;\">\n      <span style=\"background:${tickerColor}; color:white; border-radius:3px; padding:1px 5px; font-size:11px; margin-right:4px;\">${ticker}</span>\n      ${icon} ${dot}\n      <a href=\"${link}\" style=\"color:#2c3e50; text-decoration:none; font-weight:500;\">${title}</a>\n      ${reason ? `<br><span style=\"color:#888; font-size:12px; margin-left:4px;\">↳ ${reason}</span>` : ''}\n    </td>\n  </tr>`;\n};\n\n// Zlicz statystyki\nconst bullish = analysis.filter(a => a.sentiment === 'BULLISH').length;\nconst bearish = analysis.filter(a => a.sentiment === 'BEARISH').length;\nconst high    = analysis.filter(a => a.importance === 'HIGH').length;\n\nconst html = `\n<html><body style=\"font-family:Arial,sans-serif; max-width:720px; margin:auto; color:#333;\">\n\n<h2 style=\"border-bottom:2px solid #2980b9; padding-bottom:8px;\">\n  📊 Raport GPW — ${new Date().toLocaleDateString('pl-PL', {\n    weekday:'long', day:'numeric', month:'long'\n  })}\n</h2>\n\n<div style=\"background:#f8f9fa; border-radius:6px; padding:10px 14px; margin-bottom:16px; font-size:13px;\">\n  📈 Bullish: <strong>${bullish}</strong> &nbsp;|&nbsp;\n  📉 Bearish: <strong>${bearish}</strong> &nbsp;|&nbsp;\n  🔴 Ważne: <strong>${high}</strong> &nbsp;|&nbsp;\n  Łącznie: <strong>${origItems.length}</strong> newsów\n</div>\n\n${highItems.length > 0 ? `\n<h3 style=\"color:#c0392b;\">🔴 Wysokie znaczenie — możliwy wpływ na kurs</h3>\n<table style=\"width:100%; border-collapse:collapse;\">\n  <tbody>${highItems.map((item) => renderRow(item, origItems.indexOf(item))).join('')}</tbody>\n</table>\n` : ''}\n\n${spolkiRest.length > 0 ? `\n<h3 style=\"color:#2c3e50; margin-top:20px;\">🏢 Twoje spółki</h3>\n<table style=\"width:100%; border-collapse:collapse;\">\n  <tbody>${spolkiRest.map((item) => renderRow(item, origItems.indexOf(item))).join('')}</tbody>\n</table>\n` : ''}\n\n${makroItems.length > 0 ? `\n<h3 style=\"color:#7f8c8d; margin-top:20px;\">🌍 Makroekonomia</h3>\n<table style=\"width:100%; border-collapse:collapse;\">\n  <tbody>${makroItems.map((item) => renderRow(item, origItems.indexOf(item))).join('')}</tbody>\n</table>\n` : ''}\n\n<hr style=\"margin-top:24px;\">\n<p style=\"color:#bbb; font-size:11px;\">\n  n8n GPW Agent v3.0 | Analiza: Claude Haiku | Źródła: Bankier ESPI + Giełda\n</p>\n</body></html>\n`;\n\nreturn [{ json: { \n  html, \n  count: origItems.length, \n  high, \n  bullish, \n  bearish \n}}];"
+        "jsCode": "// Pobierz oryginalną listę newsów\nconst input = $input.first().json;\nconst claudeRaw = input.claudeResponse;\nconst origItems = input.originalItems;\n\n// Pobierz analizę Claude\nlet analysis = [];\n\ntry {\n  // Claude zwraca content jako tablicę — wyciągamy tekst\n  const rawText = claudeRaw.content?.[0]?.text || '[]';\n  // Usuń ewentualne backticki gdyby Claude jednak dodał markdown\n  const cleaned = rawText.replace(/```json|```/g, '').trim();\n  analysis = JSON.parse(cleaned);\n} catch(e) {\n  // Jeśli parsowanie padnie — kontynuuj bez sentymentu\n  analysis = [];\n}\n\n// Stwórz mapę: id → analiza (id w Claude zaczyna się od 1)\nconst analysisMap = {};\nfor (const a of analysis) {\n  analysisMap[a.id] = a;\n}\n\n// Stałe wizualne\nconst sentimentIcon = { BULLISH: '📈', BEARISH: '📉', NEUTRAL: '➡️' };\nconst importanceDot = { HIGH: '🔴', MEDIUM: '🟡', LOW: '⚪' };\nconst tickerColor   = '#2980b9';\n\n// Podziel na kategorie\nconst highItems  = origItems.filter((_, i) => analysisMap[i+1]?.importance === 'HIGH');\nconst spolkiRest = origItems.filter((item, i) => \n  item._category === 'SPOLKA' && analysisMap[i+1]?.importance !== 'HIGH'\n);\nconst makroItems = origItems.filter((item, i) => \n  item._category === 'MAKRO' && analysisMap[i+1]?.importance !== 'HIGH'\n);\n\nconst renderRow = (item, idx) => {\n  const a       = analysisMap[idx + 1] || {};\n  const date    = item.pubDate\n    ? new Date(item.pubDate).toLocaleString('pl-PL', {\n        day: '2-digit', month: '2-digit',\n        hour: '2-digit', minute: '2-digit'\n      })\n    : '';\n  const ticker  = item._ticker || '';\n  const title   = item.title || '';\n  const sourceBadge = item._source === 'google_news' \n  ? `<span style=\"color:#aaa; font-size:10px;\"> • Google News</span>`\n  : `<span style=\"color:#aaa; font-size:10px;\"> • Bankier</span>`;\n  const link    = item.link || '#';\n  const icon    = sentimentIcon[a.sentiment] || '➡️';\n  const dot     = importanceDot[a.importance] || '⚪';\n  const reason  = a.reason || '';\n\n  return `<tr style=\"border-bottom:1px solid #f0f0f0;\">\n    <td style=\"padding:6px 8px; color:#999; font-size:11px; white-space:nowrap; vertical-align:top;\">${date}</td>\n    <td style=\"padding:6px 8px; vertical-align:top;\">\n      <span style=\"background:${tickerColor}; color:white; border-radius:3px; padding:1px 5px; font-size:11px; margin-right:4px;\">${ticker}</span>\n      ${icon} ${dot}\n      <a href=\"${link}\" style=\"color:#2c3e50; text-decoration:none; font-weight:500;\">${title} ${sourceBadge}</a>\n      ${reason ? `<br><span style=\"color:#888; font-size:12px; margin-left:4px;\">↳ ${reason}</span>` : ''}\n    </td>\n  </tr>`;\n};\n\n// Zlicz statystyki\nconst bullish = analysis.filter(a => a.sentiment === 'BULLISH').length;\nconst bearish = analysis.filter(a => a.sentiment === 'BEARISH').length;\nconst high    = analysis.filter(a => a.importance === 'HIGH').length;\n\nconst html = `\n<html><body style=\"font-family:Arial,sans-serif; max-width:720px; margin:auto; color:#333;\">\n\n<h2 style=\"border-bottom:2px solid #2980b9; padding-bottom:8px;\">\n  📊 Raport GPW — ${new Date().toLocaleDateString('pl-PL', {\n    weekday:'long', day:'numeric', month:'long'\n  })}\n</h2>\n\n<div style=\"background:#f8f9fa; border-radius:6px; padding:10px 14px; margin-bottom:16px; font-size:13px;\">\n  📈 Bullish: <strong>${bullish}</strong> &nbsp;|&nbsp;\n  📉 Bearish: <strong>${bearish}</strong> &nbsp;|&nbsp;\n  🔴 Ważne: <strong>${high}</strong> &nbsp;|&nbsp;\n  Łącznie: <strong>${origItems.length}</strong> newsów\n</div>\n\n${highItems.length > 0 ? `\n<h3 style=\"color:#c0392b;\">🔴 Wysokie znaczenie — możliwy wpływ na kurs</h3>\n<table style=\"width:100%; border-collapse:collapse;\">\n  <tbody>${highItems.map((item) => renderRow(item, origItems.indexOf(item))).join('')}</tbody>\n</table>\n` : ''}\n\n${spolkiRest.length > 0 ? `\n<h3 style=\"color:#2c3e50; margin-top:20px;\">🏢 Twoje spółki</h3>\n<table style=\"width:100%; border-collapse:collapse;\">\n  <tbody>${spolkiRest.map((item) => renderRow(item, origItems.indexOf(item))).join('')}</tbody>\n</table>\n` : ''}\n\n${makroItems.length > 0 ? `\n<h3 style=\"color:#7f8c8d; margin-top:20px;\">🌍 Makroekonomia</h3>\n<table style=\"width:100%; border-collapse:collapse;\">\n  <tbody>${makroItems.map((item) => renderRow(item, origItems.indexOf(item))).join('')}</tbody>\n</table>\n` : ''}\n\n<hr style=\"margin-top:24px;\">\n<p style=\"color:#bbb; font-size:11px;\">\n  n8n GPW Agent v3.0 | Analiza: Claude Haiku | Źródła: Bankier ESPI + Giełda\n</p>\n</body></html>\n`;\n\nreturn [{ json: { \n  html, \n  count: origItems.length, \n  high, \n  bullish, \n  bearish \n}}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1568,
-        -32
+        2000,
+        64
       ],
       "id": "2c9b17d0-eab4-4c9d-b889-d5a99d76788c",
       "name": "Formatowanie dla emaila"
@@ -76,8 +67,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.2,
       "position": [
-        1792,
-        -32
+        2224,
+        64
       ],
       "id": "255f3a49-ab37-4311-8358-217a8741369e",
       "name": "Send a message",
@@ -91,13 +82,13 @@
     },
     {
       "parameters": {
-        "jsCode": "// ============================================\n// TWOJE PORTFOLIO — dostosuj nazwy do swoich spółek\n// Każda spółka ma listę słów kluczowych które\n// mogą pojawić się w tytule newsa\n// ============================================\nconst PORTFOLIO = [\n  { ticker: 'ICE',  keywords: ['Medinice', 'ICE', 'medinice'] },\n  { ticker: 'OPL',  keywords: ['Orange Polska', 'Orange PL', 'OPL'] },\n  { ticker: 'PKN',  keywords: ['PKN', 'Orlen', 'ORLEN', 'PKN ORLEN'] },\n  { ticker: 'KGH',  keywords: ['KGHM', 'KGH', 'Polska Miedź'] },\n  { ticker: 'JSW',  keywords: ['JSW', 'Jastrzębska', 'Jastrzebska'] },\n  // Dodaj pozostałe spółki z Twojego portfolio:\n  { ticker: 'LBW',  keywords: ['Lubawa', 'LBW'] },\n  { ticker: 'MLR',  keywords: ['Molecure', 'MLR'] },\n  { ticker: 'ENA',  keywords: ['Enea', 'ENA'] },\n  { ticker: 'PGE',  keywords: ['PGE'] },\n  { ticker: 'TRK',  keywords: ['Trakcja', 'TRK'] },\n  { ticker: 'DVL',  keywords: ['Develia', 'DVL'] },\n  { ticker: 'CPT',  keywords: ['Captor', 'CPT'] },\n  { ticker: 'ALR',  keywords: ['Alior', 'ALR'] },\n  { ticker: 'CRE',  keywords: ['Creotech', 'CRE'] },\n  { ticker: 'PZU',  keywords: ['PZU'] },\n  { ticker: 'ATT',  keywords: ['Azoty', 'ATT', 'Grupa Azoty'] },\n];\n\n// ============================================\n// MAKRO — newsy które zawsze przepuszczamy\n// niezależnie od spółki\n// ============================================\nconst MAKRO_KEYWORDS = [\n  'RPP', 'stopy procentowe', 'stopa procentowa',\n  'inflacja', 'CPI', 'GUS', 'NBP',\n  'Fed', 'Federal Reserve', 'EBC', 'ECB',\n  'PKB', 'GDP', 'bezrobocie',\n  'cła', 'taryfy', 'Trump',\n  'recesja', 'stagflacja',\n  'WIG20', 'WIG', 'GPW sesja',\n];\n\n// ============================================\n// LOGIKA FILTROWANIA\n// ============================================\nconst items = $input.all();\nconst result = [];\n\nfor (const item of items) {\n  const title = (item.json.title || '').toLowerCase();\n  const desc  = (item.json.content || item.json.description || '').toLowerCase();\n  const text  = title + ' ' + desc;\n\n  // Sprawdź czy news dotyczy spółki z portfolio\n  let matchedTicker = null;\n  for (const stock of PORTFOLIO) {\n    if (stock.keywords.some(kw => text.includes(kw.toLowerCase()))) {\n      matchedTicker = stock.ticker;\n      break;\n    }\n  }\n\n  // Sprawdź czy to news makro\n  const isMakro = MAKRO_KEYWORDS.some(kw => text.includes(kw.toLowerCase()));\n\n  // Przepuść tylko jeśli pasuje do spółki LUB jest makro\n  if (matchedTicker || isMakro) {\n    result.push({\n      json: {\n        ...item.json,\n        _ticker: matchedTicker || 'MAKRO',\n        _category: matchedTicker ? 'SPOLKA' : 'MAKRO',\n      }\n    });\n  }\n}\n\n// Posortuj: najpierw spółki, potem makro\nresult.sort((a, b) => {\n  if (a.json._category === b.json._category) return 0;\n  return a.json._category === 'SPOLKA' ? -1 : 1;\n});\n\nreturn result;"
+        "jsCode": "// ============================================\n// TWOJE PORTFOLIO — dostosuj nazwy do swoich spółek\n// Każda spółka ma listę słów kluczowych które\n// mogą pojawić się w tytule newsa\n// ============================================\nconst PORTFOLIO = [\n  { ticker: 'ICE',  keywords: ['Medinice', 'ICE', 'medinice'] },\n  { ticker: 'OPL',  keywords: ['Orange Polska', 'Orange PL', 'OPL'] },\n  { ticker: 'PKN',  keywords: ['PKN', 'Orlen', 'ORLEN', 'PKN ORLEN'] },\n  { ticker: 'KGH',  keywords: ['KGHM', 'KGH', 'Polska Miedź'] },\n  { ticker: 'JSW',  keywords: ['JSW', 'Jastrzębska', 'Jastrzebska'] },\n  // Dodaj pozostałe spółki z Twojego portfolio:\n  { ticker: 'LBW',  keywords: ['Lubawa', 'LBW'] },\n  { ticker: 'MLR',  keywords: ['Molecure', 'MLR'] },\n  { ticker: 'ENA',  keywords: ['Enea', 'ENA'] },\n  { ticker: 'PGE',  keywords: ['PGE'] },\n  { ticker: 'TRK',  keywords: ['Trakcja', 'TRK'] },\n  { ticker: 'DVL',  keywords: ['Develia', 'DVL'] },\n  { ticker: 'CPT',  keywords: ['Captor', 'CPT'] },\n  { ticker: 'ALR',  keywords: ['Alior', 'ALR'] },\n  { ticker: 'CRE',  keywords: ['Creotech', 'CRE'] },\n  { ticker: 'PZU',  keywords: ['PZU'] },\n  { ticker: 'ATT',  keywords: ['Azoty', 'ATT', 'Grupa Azoty'] },\n];\n\n// ============================================\n// MAKRO — newsy które zawsze przepuszczamy\n// niezależnie od spółki\n// ============================================\nconst MAKRO_KEYWORDS = [\n  'RPP', 'stopy procentowe', 'stopa procentowa',\n  'inflacja', 'CPI', 'GUS', 'NBP',\n  'Fed', 'Federal Reserve', 'EBC', 'ECB',\n  'PKB', 'GDP', 'bezrobocie',\n  'cła', 'taryfy', 'Trump',\n  'recesja', 'stagflacja',\n  'WIG20', 'WIG', 'GPW sesja',\n];\n\n// ============================================\n// LOGIKA FILTROWANIA\n// ============================================\nconst items = $input.all().filter(i => !i.json._skip);\nconst result = [];\n\nfor (const item of items) {\n  const title = (item.json.title || '').toLowerCase();\n  const desc  = (item.json.content || item.json.description || '').toLowerCase();\n  const text  = title + ' ' + desc;\n\n  // Sprawdź czy news dotyczy spółki z portfolio\n  let matchedTicker = null;\n  for (const stock of PORTFOLIO) {\n    if (stock.keywords.some(kw => text.includes(kw.toLowerCase()))) {\n      matchedTicker = stock.ticker;\n      break;\n    }\n  }\n\n  // Sprawdź czy to news makro\n  const isMakro = MAKRO_KEYWORDS.some(kw => text.includes(kw.toLowerCase()));\n\n  // Przepuść tylko jeśli pasuje do spółki LUB jest makro\n  if (matchedTicker || isMakro) {\n    result.push({\n      json: {\n        ...item.json,\n        _ticker: matchedTicker || 'MAKRO',\n        _category: matchedTicker ? 'SPOLKA' : 'MAKRO',\n      }\n    });\n  }\n}\n\n// Posortuj: najpierw spółki, potem makro\nresult.sort((a, b) => {\n  if (a.json._category === b.json._category) return 0;\n  return a.json._category === 'SPOLKA' ? -1 : 1;\n});\nconst seen = new Set();\nconst deduped = result.filter(item => {\n  // Klucz: pierwsze 50 znaków tytułu (normalizowane)\n  const key = (item.json.title || '').toLowerCase().substring(0, 50);\n  if (seen.has(key)) return false;\n  seen.add(key);\n  return true;\n});\n\nreturn deduped;"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        672,
-        -32
+        1104,
+        64
       ],
       "id": "79599397-3b55-4698-b1fa-d8e57834d1e4",
       "name": "Filtr spółek i makro"
@@ -109,8 +100,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        896,
-        -32
+        1328,
+        64
       ],
       "id": "4431c755-e47d-4ff6-b438-da7ba53462a7",
       "name": "Przygotuj prompt"
@@ -145,8 +136,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1120,
-        -32
+        1552,
+        64
       ],
       "id": "2d4f7073-3c5d-425a-8ecd-c2b6e8322afa",
       "name": "HTTP Request: Claude API",
@@ -159,31 +150,84 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1344,
-        -32
+        1776,
+        64
       ],
       "id": "a24814c7-8734-4cbd-8c0e-bb1be37b9f32",
       "name": "Scala wyniki"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * 1-5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -16,
+        64
+      ],
+      "id": "8a1b24fa-8d8a-4de5-beb1-f92a6e3099fc",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Lista spółek — ta sama co w Code: Filtr\n// Tutaj używamy nazw do wyszukiwania w Google News\nconst spolki = [\n  { ticker: 'ICE',  query: 'Medinice akcje GPW' },\n  { ticker: 'OPL',  query: 'Orange Polska akcje GPW' },\n  { ticker: 'PKN',  query: 'PKN Orlen akcje GPW' },\n  { ticker: 'KGH',  query: 'KGHM akcje GPW' },\n  { ticker: 'JSW',  query: 'JSW Jastrzębska akcje GPW' },\n  { ticker: 'LBW',  query: 'Lubawa akcje GPW' },\n  { ticker: 'MLR',  query: 'Molecure akcje GPW' },\n  { ticker: 'ENA',  query: 'Enea akcje GPW' },\n  { ticker: 'PGE',  query: 'PGE akcje GPW' },\n  { ticker: 'TRK',  query: 'Trakcja PRKiI akcje GPW' },\n  { ticker: 'DVL',  query: 'Develia akcje GPW' },\n  { ticker: 'CPT',  query: 'Captor Therapeutics akcje GPW' },\n  { ticker: 'ALR',  query: 'Alior Bank akcje GPW' },\n  { ticker: 'CRE',  query: 'Creotech Instruments akcje GPW' },\n  { ticker: 'PZU',  query: 'PZU akcje GPW' },\n  { ticker: 'ATT',  query: 'Grupa Azoty akcje GPW' },\n  // Spółki US\n  { ticker: 'PLTR', query: 'Palantir stock news' },\n  { ticker: 'QCOM', query: 'Qualcomm stock news' },\n  { ticker: 'JPM',  query: 'JPMorgan stock news' },\n];\n\nreturn spolki.map(s => ({\n  json: {\n    ticker: s.ticker,\n    url: `https://news.google.com/rss/search?q=${encodeURIComponent(s.query)}&hl=pl&gl=PL&ceid=PL:pl`\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        256
+      ],
+      "id": "3be36d86-571d-45e7-8585-4ab6748c74bf",
+      "name": "Generuj URL Google News"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 500
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        432,
+        256
+      ],
+      "id": "2700ac42-bfd8-463f-aa07-644d186b724e",
+      "name": "Pobierz Google News RSS",
+      "executeOnce": false,
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const ticker = item.json.ticker || '';\n  const xml = item.json.data || '';\n  \n  if (typeof xml !== 'string') continue;\n\n  // Wyciągnij wszystkie <item> z RSS\n  const itemMatches = xml.match(/<item>([\\s\\S]*?)<\\/item>/g) || [];\n  \n  for (const rawItem of itemMatches.slice(0, 5)) { // max 5 newsów per spółka\n    \n    const getTag = (tag) => {\n      const m = rawItem.match(new RegExp(`<${tag}[^>]*><!\\\\[CDATA\\\\[([\\\\s\\\\S]*?)\\\\]\\\\]><\\\\/${tag}>|<${tag}[^>]*>([^<]*)<\\\\/${tag}>`));\n      return m ? (m[1] || m[2] || '').trim() : '';\n    };\n\n    const title   = getTag('title');\n    const link    = getTag('link') || rawItem.match(/<link[^>]*>([^<]*)/)?.[1]?.trim() || '';\n    const pubDate = getTag('pubDate');\n    const source  = getTag('source');\n\n    if (!title) continue;\n\n    // Filtruj tylko newsy z ostatnich 48h\n    const pub = new Date(pubDate);\n    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);\n    if (pubDate && pub < cutoff) continue;\n\n    results.push({\n      json: {\n        title,\n        link,\n        pubDate,\n        source,\n        _ticker: ticker,\n        _category: 'SPOLKA',\n        _source: 'google_news'\n      }\n    });\n  }\n}\n\nreturn results.length > 0 ? results : [{ json: { _skip: true } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        256
+      ],
+      "id": "6782367d-b398-46a0-8118-36a0a77633f7",
+      "name": "Parsuj Google News XML"
     }
   ],
   "pinData": {},
   "connections": {
-    "When clicking ‘Execute workflow’": {
-      "main": [
-        [
-          {
-            "node": "RSS Feed: Bankier ESPI",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "RSS Feed: Bankier Giełda",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "RSS Feed: Bankier ESPI": {
       "main": [
         [
@@ -271,6 +315,60 @@
           }
         ]
       ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "RSS Feed: Bankier Giełda",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "RSS Feed: Bankier ESPI",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generuj URL Google News",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generuj URL Google News": {
+      "main": [
+        [
+          {
+            "node": "Pobierz Google News RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pobierz Google News RSS": {
+      "main": [
+        [
+          {
+            "node": "Parsuj Google News XML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsuj Google News XML": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
     }
   },
   "active": false,
@@ -279,7 +377,7 @@
     "binaryMode": "separate",
     "availableInMCP": false
   },
-  "versionId": "ba1ea9dd-dbfe-495e-a87b-fde338f1abc8",
+  "versionId": "e2c9faf7-1563-4027-8cc3-afb43e07078c",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "aa47a6072b31783d110737f20a24e70688ccc8dc522cf419aa8d709d2bd88407"
