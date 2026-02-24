@@ -55,12 +55,12 @@
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all();\n\nif (items.length === 0) {\n  return [{ json: { \n    html: '<p>Brak newsów dotyczących portfolio i makro.</p>', \n    count: 0 \n  }}];\n}\n\n// Pogrupuj newsy\nconst spolki = items.filter(i => i.json._category === 'SPOLKA');\nconst makro  = items.filter(i => i.json._category === 'MAKRO');\n\nconst renderRow = (item) => {\n  const date = item.json.pubDate\n    ? new Date(item.json.pubDate).toLocaleString('pl-PL', {\n        day: '2-digit', month: '2-digit',\n        hour: '2-digit', minute: '2-digit'\n      })\n    : '';\n  const title  = item.json.title || 'brak tytułu';\n  const link   = item.json.link || '#';\n  const ticker = item.json._ticker || '';\n\n  return `<tr>\n    <td style=\"padding:4px 8px; color:#888; font-size:12px; white-space:nowrap;\">${date}</td>\n    <td style=\"padding:4px 8px;\">\n      <span style=\"background:#2980b9; color:white; border-radius:3px; padding:1px 5px; font-size:11px; margin-right:6px;\">${ticker}</span>\n      <a href=\"${link}\" style=\"color:#2c3e50; text-decoration:none;\">${title}</a>\n    </td>\n  </tr>`;\n};\n\nconst spolkiRows = spolki.map(renderRow).join('');\nconst makroRows  = makro.map(renderRow).join('');\n\nconst html = `\n<html><body style=\"font-family:Arial,sans-serif; max-width:700px; margin:auto; color:#333;\">\n\n  <h2 style=\"border-bottom:2px solid #2980b9; padding-bottom:8px;\">\n    📊 Newsy GPW — ${new Date().toLocaleDateString('pl-PL', {\n      weekday:'long', day:'numeric', month:'long'\n    })}\n  </h2>\n  <p style=\"color:#888; font-size:13px;\">\n    Spółki: ${spolki.length} newsów &nbsp;|&nbsp; Makro: ${makro.length} newsów\n  </p>\n\n  ${spolki.length > 0 ? `\n  <h3 style=\"color:#2c3e50; margin-top:20px;\">🏢 Twoje spółki</h3>\n  <table style=\"width:100%; border-collapse:collapse;\">\n    <tbody>${spolkiRows}</tbody>\n  </table>` : '<p style=\"color:#aaa;\">Brak newsów dla spółek z portfolio.</p>'}\n\n  ${makro.length > 0 ? `\n  <h3 style=\"color:#7f8c8d; margin-top:24px;\">🌍 Makroekonomia</h3>\n  <table style=\"width:100%; border-collapse:collapse;\">\n    <tbody>${makroRows}</tbody>\n  </table>` : ''}\n\n  <hr style=\"margin-top:20px;\">\n  <p style=\"color:#aaa; font-size:11px;\">\n    n8n GPW Agent v2.0 | Etap 2 — filtrowanie po portfolio i makro\n  </p>\n</body></html>\n`;\n\nreturn [{ json: { html, count: items.length, spolki: spolki.length, makro: makro.length } }];"
+        "jsCode": "// Pobierz oryginalną listę newsów\nconst input = $input.first().json;\nconst claudeRaw = input.claudeResponse;\nconst origItems = input.originalItems;\n\n// Pobierz analizę Claude\nlet analysis = [];\n\ntry {\n  // Claude zwraca content jako tablicę — wyciągamy tekst\n  const rawText = claudeRaw.content?.[0]?.text || '[]';\n  // Usuń ewentualne backticki gdyby Claude jednak dodał markdown\n  const cleaned = rawText.replace(/```json|```/g, '').trim();\n  analysis = JSON.parse(cleaned);\n} catch(e) {\n  // Jeśli parsowanie padnie — kontynuuj bez sentymentu\n  analysis = [];\n}\n\n// Stwórz mapę: id → analiza (id w Claude zaczyna się od 1)\nconst analysisMap = {};\nfor (const a of analysis) {\n  analysisMap[a.id] = a;\n}\n\n// Stałe wizualne\nconst sentimentIcon = { BULLISH: '📈', BEARISH: '📉', NEUTRAL: '➡️' };\nconst importanceDot = { HIGH: '🔴', MEDIUM: '🟡', LOW: '⚪' };\nconst tickerColor   = '#2980b9';\n\n// Podziel na kategorie\nconst highItems  = origItems.filter((_, i) => analysisMap[i+1]?.importance === 'HIGH');\nconst spolkiRest = origItems.filter((item, i) => \n  item._category === 'SPOLKA' && analysisMap[i+1]?.importance !== 'HIGH'\n);\nconst makroItems = origItems.filter((item, i) => \n  item._category === 'MAKRO' && analysisMap[i+1]?.importance !== 'HIGH'\n);\n\nconst renderRow = (item, idx) => {\n  const a       = analysisMap[idx + 1] || {};\n  const date    = item.pubDate\n    ? new Date(item.pubDate).toLocaleString('pl-PL', {\n        day: '2-digit', month: '2-digit',\n        hour: '2-digit', minute: '2-digit'\n      })\n    : '';\n  const ticker  = item._ticker || '';\n  const title   = item.title || '';\n  const link    = item.link || '#';\n  const icon    = sentimentIcon[a.sentiment] || '➡️';\n  const dot     = importanceDot[a.importance] || '⚪';\n  const reason  = a.reason || '';\n\n  return `<tr style=\"border-bottom:1px solid #f0f0f0;\">\n    <td style=\"padding:6px 8px; color:#999; font-size:11px; white-space:nowrap; vertical-align:top;\">${date}</td>\n    <td style=\"padding:6px 8px; vertical-align:top;\">\n      <span style=\"background:${tickerColor}; color:white; border-radius:3px; padding:1px 5px; font-size:11px; margin-right:4px;\">${ticker}</span>\n      ${icon} ${dot}\n      <a href=\"${link}\" style=\"color:#2c3e50; text-decoration:none; font-weight:500;\">${title}</a>\n      ${reason ? `<br><span style=\"color:#888; font-size:12px; margin-left:4px;\">↳ ${reason}</span>` : ''}\n    </td>\n  </tr>`;\n};\n\n// Zlicz statystyki\nconst bullish = analysis.filter(a => a.sentiment === 'BULLISH').length;\nconst bearish = analysis.filter(a => a.sentiment === 'BEARISH').length;\nconst high    = analysis.filter(a => a.importance === 'HIGH').length;\n\nconst html = `\n<html><body style=\"font-family:Arial,sans-serif; max-width:720px; margin:auto; color:#333;\">\n\n<h2 style=\"border-bottom:2px solid #2980b9; padding-bottom:8px;\">\n  📊 Raport GPW — ${new Date().toLocaleDateString('pl-PL', {\n    weekday:'long', day:'numeric', month:'long'\n  })}\n</h2>\n\n<div style=\"background:#f8f9fa; border-radius:6px; padding:10px 14px; margin-bottom:16px; font-size:13px;\">\n  📈 Bullish: <strong>${bullish}</strong> &nbsp;|&nbsp;\n  📉 Bearish: <strong>${bearish}</strong> &nbsp;|&nbsp;\n  🔴 Ważne: <strong>${high}</strong> &nbsp;|&nbsp;\n  Łącznie: <strong>${origItems.length}</strong> newsów\n</div>\n\n${highItems.length > 0 ? `\n<h3 style=\"color:#c0392b;\">🔴 Wysokie znaczenie — możliwy wpływ na kurs</h3>\n<table style=\"width:100%; border-collapse:collapse;\">\n  <tbody>${highItems.map((item) => renderRow(item, origItems.indexOf(item))).join('')}</tbody>\n</table>\n` : ''}\n\n${spolkiRest.length > 0 ? `\n<h3 style=\"color:#2c3e50; margin-top:20px;\">🏢 Twoje spółki</h3>\n<table style=\"width:100%; border-collapse:collapse;\">\n  <tbody>${spolkiRest.map((item) => renderRow(item, origItems.indexOf(item))).join('')}</tbody>\n</table>\n` : ''}\n\n${makroItems.length > 0 ? `\n<h3 style=\"color:#7f8c8d; margin-top:20px;\">🌍 Makroekonomia</h3>\n<table style=\"width:100%; border-collapse:collapse;\">\n  <tbody>${makroItems.map((item) => renderRow(item, origItems.indexOf(item))).join('')}</tbody>\n</table>\n` : ''}\n\n<hr style=\"margin-top:24px;\">\n<p style=\"color:#bbb; font-size:11px;\">\n  n8n GPW Agent v3.0 | Analiza: Claude Haiku | Źródła: Bankier ESPI + Giełda\n</p>\n</body></html>\n`;\n\nreturn [{ json: { \n  html, \n  count: origItems.length, \n  high, \n  bullish, \n  bearish \n}}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
+        1568,
         -32
       ],
       "id": "2c9b17d0-eab4-4c9d-b889-d5a99d76788c",
@@ -69,14 +69,14 @@
     {
       "parameters": {
         "sendTo": "jacek.maszota@gmail.com",
-        "subject": "=📊 GPW [{{ $json.spolki }}s + {{ $json.makro }}m] - {{ $now.format('dd.MM HH:mm') }}",
+        "subject": "=📊 GPW [🔴{{ $json.high }} 📈{{ $json.bullish }} 📉{{ $json.bearish }}] - {{ $now.format('dd.MM HH:mm') }}",
         "message": "={{ $json.html }}",
         "options": {}
       },
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.2,
       "position": [
-        1104,
+        1792,
         -32
       ],
       "id": "255f3a49-ab37-4311-8358-217a8741369e",
@@ -96,11 +96,74 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        656,
+        672,
         -32
       ],
       "id": "79599397-3b55-4698-b1fa-d8e57834d1e4",
       "name": "Filtr spółek i makro"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// Zbuduj listę newsów jako tekst dla Claude\nconst newsText = items.map((item, i) => {\n  const ticker   = item.json._ticker || 'MAKRO';\n  const category = item.json._category || 'MAKRO';\n  const title    = item.json.title || '';\n  const desc     = item.json.content || item.json.description || '';\n  // Ucinamy opis do 200 znaków żeby nie przepalać tokenów\n  const shortDesc = desc.replace(/<[^>]*>/g, '').substring(0, 200);\n\n  return `${i + 1}. [${ticker}] ${title}${shortDesc ? '\\n   ' + shortDesc : ''}`;\n}).join('\\n\\n');\n\n// Zbuduj gotowy obiekt requestu dla Claude\nconst requestBody = {\n  model: \"claude-haiku-4-5-20251001\",\n  max_tokens: 2000,\n  system: \"Jesteś analitykiem rynku GPW i makroekonomii. Analizujesz newsy pod kątem wpływu na kursy akcji polskich spółek. Odpowiadasz WYŁĄCZNIE w formacie JSON — bez żadnego tekstu przed ani po JSON. Bez markdown, bez komentarzy.\",\n  messages: [\n    {\n      role: \"user\",\n      content: `Przeanalizuj poniższe newsy giełdowe. Dla każdego zwróć obiekt JSON z polami:\\n- id: numer newsa (liczba)\\n- sentiment: BULLISH / BEARISH / NEUTRAL\\n- importance: HIGH / MEDIUM / LOW\\n- reason: max 15 słów po polsku — dlaczego taki wpływ na kurs\\n\\nKryterium importance:\\n- HIGH: wyniki finansowe, duże kontrakty, zmiana zarządu, postępowania regulacyjne, decyzje RPP\\n- MEDIUM: mniejsze kontrakty, prognozy analityków, dane makro\\n- LOW: formalne komunikaty, transakcje insiderów na małą skalę, WZA\\n\\nOdpowiedz TYLKO tablicą JSON, np.:\\n[{\"id\":1,\"sentiment\":\"BULLISH\",\"importance\":\"HIGH\",\"reason\":\"Wyniki znacznie powyżej oczekiwań rynku\"}]\\n\\nNewsy do analizy:\\n${newsText}`\n    }\n  ]\n};\n// Zapisz originalItems w Static Data żeby były dostępne po HTTP Request\nconst staticData = $getWorkflowStaticData('global');\nstaticData.originalItems = items.map(i => i.json);\n\n// Zwróć jeden item z całym tekstem + oryginalną listą newsów\nreturn [{\n  json: {\n    newsText,\n    requestBody,\n    originalItems: items.map(i => i.json),\n    count: items.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        -32
+      ],
+      "id": "4431c755-e47d-4ff6-b438-da7ba53462a7",
+      "name": "Przygotuj prompt"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "API_KEY"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{JSON.stringify({\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 2000,\n  \"system\": \"Jesteś analitykiem rynku GPW. Odpowiadasz WYŁĄCZNIE tablicą JSON bez tekstu przed ani po. Każdy element: {id, sentiment: BULLISH/BEARISH/NEUTRAL, importance: HIGH/MEDIUM/LOW, reason: max 15 słów po polsku}.\",\n  \"messages\": [{\"role\": \"user\", \"content\": $json.newsText}]\n})}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1120,
+        -32
+      ],
+      "id": "2d4f7073-3c5d-425a-8ecd-c2b6e8322afa",
+      "name": "HTTP Request: Claude API",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Dane z Claude (poprzedni node)\nconst claudeResponse = $input.first().json;\n\n// originalItems przekazane przez HTTP Request nie są dostępne\n// Dlatego rekonstruujemy je z danych które HTTP Request otrzymał\n// poprzez zapisanie ich w Static Data w Code: Przygotuj prompt\n\nconst stored = $getWorkflowStaticData('global');\nconst originalItems = stored.originalItems || [];\n\nreturn [{\n  json: {\n    claudeResponse,\n    originalItems\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        -32
+      ],
+      "id": "a24814c7-8734-4cbd-8c0e-bb1be37b9f32",
+      "name": "Scala wyniki"
     }
   ],
   "pinData": {},
@@ -169,6 +232,39 @@
       "main": [
         [
           {
+            "node": "Przygotuj prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Przygotuj prompt": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request: Claude API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request: Claude API": {
+      "main": [
+        [
+          {
+            "node": "Scala wyniki",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scala wyniki": {
+      "main": [
+        [
+          {
             "node": "Formatowanie dla emaila",
             "type": "main",
             "index": 0
@@ -183,7 +279,7 @@
     "binaryMode": "separate",
     "availableInMCP": false
   },
-  "versionId": "b8401858-0c3f-43ac-a153-ca5a2e270d1d",
+  "versionId": "ba1ea9dd-dbfe-495e-a87b-fde338f1abc8",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "aa47a6072b31783d110737f20a24e70688ccc8dc522cf419aa8d709d2bd88407"
