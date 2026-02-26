@@ -1,0 +1,306 @@
+{
+  "name": "Analiza Techniczna GPW",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "=0 5 * * 1-5"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -512,
+        -256
+      ],
+      "id": "5278904c-0cb8-4ffd-b76d-a891ebac8b26",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "// GPW: sam ticker lowercase, bez sufiksu\n// US:  ticker lowercase + .us\nreturn [\n  { json: { ticker: 'ICE',  symbol: 'ice',     name: 'Medinice' } },\n  { json: { ticker: 'OPL',  symbol: 'opl',     name: 'Orange Polska' } }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -288,
+        -256
+      ],
+      "id": "e1c5d262-66f2-477a-8830-ad0ded9a7e66",
+      "name": "Lista spółek"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Ticker z Static Data (zapisany przez poprzedni Code node) ──\nconst sd     = $getWorkflowStaticData('global');\nconst ticker = sd.currentTicker || 'UNKNOWN';\nconst name   = sd.currentName   || 'UNKNOWN';\nconst csv    = $input.first().json.data || $input.first().json.body || '';\n\n// ── Funkcje pomocnicze ─────────────────────────────────────────\n\nfunction parseCsv(csv) {\n  const lines = csv.trim().split('\\n').filter(l => l.trim());\n  if (lines.length < 2) return [];\n  return lines.slice(1).map(l => {\n    const [date, open, high, low, close, vol] = l.split(',');\n    return {\n      date,\n      open:  parseFloat(open),\n      high:  parseFloat(high),\n      low:   parseFloat(low),\n      close: parseFloat(close),\n      vol:   parseInt(vol) || 0,\n    };\n  }).filter(r => !isNaN(r.close));\n}\n\nfunction sma(closes, period) {\n  if (closes.length < period) return null;\n  const slice = closes.slice(-period);\n  return slice.reduce((a, b) => a + b, 0) / period;\n}\n\nfunction ema(closes, period) {\n  if (closes.length < period) return null;\n  const k = 2 / (period + 1);\n  let val = closes.slice(0, period).reduce((a, b) => a + b, 0) / period;\n  for (let i = period; i < closes.length; i++) {\n    val = closes[i] * k + val * (1 - k);\n  }\n  return val;\n}\n\nfunction rsi(closes, period = 14) {\n  if (closes.length < period + 1) return null;\n  const slice = closes.slice(-period - 1);\n  let gains = 0, losses = 0;\n  for (let i = 1; i < slice.length; i++) {\n    const diff = slice[i] - slice[i - 1];\n    if (diff > 0) gains += diff;\n    else losses -= diff;\n  }\n  const avgGain = gains / period;\n  const avgLoss = losses / period;\n  if (avgLoss === 0) return 100;\n  return 100 - (100 / (1 + avgGain / avgLoss));\n}\n\nfunction macd(closes) {\n  const ema12 = ema(closes, 12);\n  const ema26 = ema(closes, 26);\n  if (ema12 === null || ema26 === null) return null;\n  const macdLine = ema12 - ema26;\n  const macdValues = [];\n  const startIdx = Math.max(0, closes.length - 35);\n  for (let i = startIdx + 26; i <= closes.length; i++) {\n    const slice = closes.slice(startIdx, i);\n    const e12 = ema(slice, 12);\n    const e26 = ema(slice, 26);\n    if (e12 !== null && e26 !== null) macdValues.push(e12 - e26);\n  }\n  const signal = macdValues.length >= 9 ? ema(macdValues, 9) : null;\n  return {\n    macd:      macdLine,\n    signal,\n    histogram: signal !== null ? macdLine - signal : null,\n  };\n}\n\nfunction avgVolume(bars, period = 20) {\n  if (bars.length < period) return null;\n  return bars.slice(-period).reduce((a, b) => a + b.vol, 0) / period;\n}\n\nfunction support(bars, period = 20) {\n  return Math.min(...bars.slice(-period).map(b => b.low));\n}\n\nfunction resistance(bars, period = 20) {\n  return Math.max(...bars.slice(-period).map(b => b.high));\n}\n\n// ── Walidacja danych ───────────────────────────────────────────\n\nif (typeof csv !== 'string' || csv.length < 50) {\n  return [{ json: { ticker, name, error: 'Brak danych CSV' } }];\n}\n\nconst bars = parseCsv(csv);\nif (bars.length < 30) {\n  return [{ json: { ticker, name, error: `Za mało danych (${bars.length} sesji)` } }];\n}\n\n// ── Obliczenia ─────────────────────────────────────────────────\n\nconst closes = bars.map(b => b.close);\nconst last   = bars[bars.length - 1];\nconst prev   = bars[bars.length - 2];\n\nconst dayChange  = ((last.close - prev.close) / prev.close * 100);\nconst rsiVal     = rsi(closes, 14);\nconst macdVal    = macd(closes);\nconst sma20Val   = sma(closes, 20);\nconst sma50Val   = sma(closes, 50);\nconst ema20Val   = ema(closes, 20);\nconst avgVol     = avgVolume(bars, 20);\nconst supportVal = support(bars, 20);\nconst resistVal  = resistance(bars, 20);\nconst volRatio   = avgVol ? (last.vol / avgVol) : null;\n\n// ── Sygnały ────────────────────────────────────────────────────\n\nconst signals = [];\n\nif (rsiVal !== null) {\n  if (rsiVal < 30)      signals.push({ type: 'BULLISH', msg: `RSI wyprzedany (${rsiVal.toFixed(1)})` });\n  else if (rsiVal > 70) signals.push({ type: 'BEARISH', msg: `RSI wykupiony (${rsiVal.toFixed(1)})` });\n}\n\nif (macdVal?.histogram !== null) {\n  if (macdVal.histogram > 0)  signals.push({ type: 'BULLISH', msg: 'MACD powyżej sygnału (trend wzrostowy)' });\n  else if (macdVal.histogram < 0) signals.push({ type: 'BEARISH', msg: 'MACD poniżej sygnału (trend spadkowy)' });\n}\n\nif (sma20Val && sma50Val) {\n  if (sma20Val > sma50Val) signals.push({ type: 'BULLISH', msg: 'SMA20 > SMA50 (golden cross)' });\n  else                     signals.push({ type: 'BEARISH', msg: 'SMA20 < SMA50 (death cross)' });\n}\n\nif (last.close && sma20Val) {\n  if (last.close > sma20Val * 1.05)      signals.push({ type: 'NEUTRAL', msg: 'Kurs 5%+ powyżej SMA20 — możliwa korekta' });\n  else if (last.close < sma20Val * 0.95) signals.push({ type: 'BULLISH', msg: 'Kurs 5%+ poniżej SMA20 — okazja?' });\n}\n\nif (volRatio !== null && volRatio > 2) {\n  signals.push({ type: 'NEUTRAL', msg: `Wolumen ${volRatio.toFixed(1)}x powyżej średniej — uwaga` });\n}\n\nconst distToResist  = resistVal  ? ((resistVal  - last.close) / last.close * 100) : null;\nconst distToSupport = supportVal ? ((last.close - supportVal) / last.close * 100) : null;\n\n// ── Output ─────────────────────────────────────────────────────\n\nreturn [{\n  json: {\n    ticker,\n    name,\n    close:         last.close,\n    dayChange:     parseFloat(dayChange.toFixed(2)),\n    date:          last.date,\n    volume:        last.vol,\n    avgVolume:     avgVol ? Math.round(avgVol) : null,\n    volRatio:      volRatio ? parseFloat(volRatio.toFixed(2)) : null,\n    rsi:           rsiVal     ? parseFloat(rsiVal.toFixed(1))            : null,\n    macd:          macdVal?.macd      ? parseFloat(macdVal.macd.toFixed(4))      : null,\n    macdSignal:    macdVal?.signal    ? parseFloat(macdVal.signal.toFixed(4))    : null,\n    macdHist:      macdVal?.histogram ? parseFloat(macdVal.histogram.toFixed(4)) : null,\n    sma20:         sma20Val ? parseFloat(sma20Val.toFixed(2)) : null,\n    sma50:         sma50Val ? parseFloat(sma50Val.toFixed(2)) : null,\n    ema20:         ema20Val ? parseFloat(ema20Val.toFixed(2)) : null,\n    support:       supportVal ? parseFloat(supportVal.toFixed(2)) : null,\n    resistance:    resistVal  ? parseFloat(resistVal.toFixed(2))  : null,\n    distToResist:  distToResist  ? parseFloat(distToResist.toFixed(1))  : null,\n    distToSupport: distToSupport ? parseFloat(distToSupport.toFixed(1)) : null,\n    signals,\n    bullishCount:  signals.filter(s => s.type === 'BULLISH').length,\n    bearishCount:  signals.filter(s => s.type === 'BEARISH').length,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        -184
+      ],
+      "id": "42c470a8-4217-403f-848e-e99ed5b72f37",
+      "name": "Parsuj CSV + Oblicz wskaźniki"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().filter(i => !i.json.error);\n\nconst taText = items.map((item, i) => {\n  const d = item.json;\n  return `${i+1}. [${d.ticker}] ${d.name} — ${d.close} zł (${d.dayChange > 0 ? '+' : ''}${d.dayChange}%)\n   RSI: ${d.rsi ?? 'n/d'} | MACD hist: ${d.macdHist ?? 'n/d'}\n   SMA20: ${d.sma20 ?? 'n/d'} | SMA50: ${d.sma50 ?? 'n/d'}\n   Wsparcie: ${d.support ?? 'n/d'} | Opór: ${d.resistance ?? 'n/d'}\n   Wolumen: ${d.volRatio ?? 'n/d'}x średniej\n   Sygnały: ${d.signals.map(s => s.msg).join('; ') || 'brak'}`;\n}).join('\\n\\n');\n\n// Zapisz dane do Static Data dla formatera\nconst sd = $getWorkflowStaticData('global');\nsd.taItems = items.map(i => i.json);\n\nreturn [{ json: { taText, count: items.length } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        -448
+      ],
+      "id": "f00c5cec-21ec-4a45-ac8c-0dd55e1397a8",
+      "name": "Przygotuj prompt"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "API_KEY"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{JSON.stringify({\n  \"model\": \"claude-sonnet-4-6\",\n  \"max_tokens\": 3000,\n  \"system\": \"Jesteś analitykiem technicznym rynku GPW. Interpretujesz wskaźniki techniczne dla inwestora indywidualnego. Odpowiadasz WYŁĄCZNIE tablicą JSON bez tekstu przed ani po.\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Na podstawie danych technicznych oceń każdą spółkę.\\n\\nDla każdej zwróć obiekt JSON:\\n{\\n  \\\"ticker\\\": \\\"...\\\",\\n  \\\"ocena\\\": \\\"AKUMULUJ / TRZYMAJ / REDUKUJ\\\",\\n  \\\"sila_sygnalu\\\": \\\"SILNY / UMIARKOWANY / SLABY\\\",\\n  \\\"interpretacja\\\": \\\"2-3 zdania po polsku\\\",\\n  \\\"kluczowy_poziom\\\": \\\"najważniejszy poziom cenowy\\\",\\n  \\\"uwaga\\\": \\\"ostrzeżenie jeśli coś niepokojącego (opcjonalne)\\\"\\n}\\n\\nDANE:\\n\" + $json.taText\n  }]\n})}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        384,
+        -448
+      ],
+      "id": "e6140e48-9c40-4f9b-b602-4e250fb280c8",
+      "name": "Cloude Sonnet"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -64,
+        -256
+      ],
+      "id": "2f692e7b-b237-489c-a64c-b0eceb47ea2c",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "url": "=https://stooq.com/q/d/l/?s={{ $json.symbol }}&i=d",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        384,
+        -256
+      ],
+      "id": "500f006b-866e-429c-bc95-1fc8cbac1d67",
+      "name": "Stooq CSV"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\n// Zapisz ticker dla bieżącej iteracji w Static Data\nconst sd = $getWorkflowStaticData('global');\nsd.currentTicker = item.ticker;\nsd.currentName   = item.name;\n\nreturn [{ json: {\n  ticker: item.ticker,\n  name:   item.name,\n  symbol: item.symbol,\n  url:    `https://stooq.com/q/d/l/?s=${item.symbol}&i=d`\n}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        -256
+      ],
+      "id": "830b3ebb-ce84-4f68-baf7-5138ae5b89d1",
+      "name": "Przygotuj URL"
+    },
+    {
+      "parameters": {
+        "jsCode": "const claudeRaw = $input.first().json;\nconst rawText = claudeRaw.content?.[0]?.text || '[]';\nconst cleaned = rawText.replace(/```json|```/g, '').trim();\nlet analysis = [];\ntry { analysis = JSON.parse(cleaned); }\ncatch(e) { analysis = []; }\n\nconst sd = $getWorkflowStaticData('global');\nconst taItems = sd.taItems || [];\n\n// Mapa: ticker → dane techniczne\nconst dataMap = {};\nfor (const d of taItems) dataMap[d.ticker] = d;\n\n// Mapa: ticker → analiza Claude\nconst aiMap = {};\nfor (const a of analysis) aiMap[a.ticker] = a;\n\nconst ocenaColor = { 'AKUMULUJ': '#27ae60', 'TRZYMAJ': '#f39c12', 'REDUKUJ': '#e74c3c' };\nconst silaIcon   = { 'SILNY': '🔥', 'UMIARKOWANY': '📊', 'SLABY': '💤' };\nconst rsiColor   = (r) => r < 30 ? '#27ae60' : r > 70 ? '#e74c3c' : '#333';\nconst macdColor  = (h) => h > 0 ? '#27ae60' : '#e74c3c';\nconst volColor   = (v) => v > 1.5 ? '#e67e22' : '#333';\n\nconst rows = taItems.map(d => {\n  const ai  = aiMap[d.ticker] || {};\n  const sig = d.signals.map(s => {\n    const c = s.type === 'BULLISH' ? '#27ae60' : s.type === 'BEARISH' ? '#e74c3c' : '#888';\n    return `<span style=\"color:${c}; font-size:11px;\">• ${s.msg}</span>`;\n  }).join('<br>');\n\n  return `\n  <tr style=\"border-bottom:1px solid #f0f0f0;\">\n    <td style=\"padding:10px 8px; vertical-align:top; min-width:80px;\">\n      <strong>${d.ticker}</strong><br>\n      <span style=\"font-size:11px; color:#888;\">${d.name}</span>\n    </td>\n    <td style=\"padding:10px 8px; vertical-align:top; text-align:right;\">\n      <strong>${d.close}</strong><br>\n      <span style=\"color:${d.dayChange >= 0 ? '#27ae60' : '#e74c3c'}; font-size:12px;\">\n        ${d.dayChange >= 0 ? '+' : ''}${d.dayChange}%\n      </span>\n    </td>\n    <td style=\"padding:10px 8px; vertical-align:top; text-align:center;\">\n      <span style=\"color:${rsiColor(d.rsi)}; font-weight:bold;\">${d.rsi ?? '—'}</span>\n    </td>\n    <td style=\"padding:10px 8px; vertical-align:top; text-align:center;\">\n      <span style=\"color:${d.macdHist ? macdColor(d.macdHist) : '#888'};\">\n        ${d.macdHist > 0 ? '▲' : d.macdHist < 0 ? '▼' : '—'}\n        ${d.macdHist ? d.macdHist.toFixed(3) : ''}\n      </span>\n    </td>\n    <td style=\"padding:10px 8px; vertical-align:top; font-size:12px;\">\n      SMA20: ${d.sma20 ?? '—'}<br>\n      SMA50: ${d.sma50 ?? '—'}\n    </td>\n    <td style=\"padding:10px 8px; vertical-align:top; font-size:12px;\">\n      S: ${d.support ?? '—'}<br>\n      R: ${d.resistance ?? '—'}\n    </td>\n    <td style=\"padding:10px 8px; vertical-align:top; text-align:center; font-size:12px;\">\n      <span style=\"color:${d.volRatio ? volColor(d.volRatio) : '#333'};\">\n        ${d.volRatio ? d.volRatio + 'x' : '—'}\n      </span>\n    </td>\n    <td style=\"padding:10px 8px; vertical-align:top;\">\n      ${sig || '<span style=\"color:#aaa; font-size:11px;\">brak sygnałów</span>'}\n    </td>\n    <td style=\"padding:10px 8px; vertical-align:top; min-width:180px;\">\n      ${ai.ocena ? `<span style=\"background:${ocenaColor[ai.ocena] || '#888'}; color:white; border-radius:3px; padding:2px 7px; font-size:11px;\">${ai.ocena}</span>\n      ${silaIcon[ai.sila_sygnalu] || ''}<br>` : ''}\n      <span style=\"font-size:12px; color:#555;\">${ai.interpretacja || ''}</span>\n      ${ai.kluczowy_poziom ? `<br><span style=\"font-size:11px; color:#2980b9;\">📍 ${ai.kluczowy_poziom}</span>` : ''}\n      ${ai.uwaga ? `<br><span style=\"font-size:11px; color:#e74c3c;\">⚠️ ${ai.uwaga}</span>` : ''}\n    </td>\n  </tr>`;\n}).join('');\n\n// Podsumowanie sygnałów\nconst totalBullish = taItems.reduce((a, d) => a + d.bullishCount, 0);\nconst totalBearish = taItems.reduce((a, d) => a + d.bearishCount, 0);\nconst topBullish = [...taItems].sort((a, b) => b.bullishCount - a.bullishCount).slice(0, 3);\nconst topBearish = [...taItems].sort((a, b) => b.bearishCount - a.bearishCount).slice(0, 3);\n\nconst html = `\n<html><body style=\"font-family:Arial,sans-serif; max-width:1100px; margin:auto; color:#333; font-size:13px;\">\n\n<h2 style=\"border-bottom:2px solid #8e44ad; padding-bottom:8px;\">\n  📐 Analiza Techniczna GPW — ${new Date().toLocaleDateString('pl-PL', {\n    weekday:'long', day:'numeric', month:'long'\n  })}\n</h2>\n\n<div style=\"background:#f8f0ff; border-radius:6px; padding:10px 14px; margin-bottom:16px; font-size:13px;\">\n  📈 Sygnały BULLISH łącznie: <strong style=\"color:#27ae60;\">${totalBullish}</strong> &nbsp;|&nbsp;\n  📉 Sygnały BEARISH łącznie: <strong style=\"color:#e74c3c;\">${totalBearish}</strong> &nbsp;|&nbsp;\n  Spółek: <strong>${taItems.length}</strong>\n  <br><br>\n  <strong>Top BULLISH:</strong> ${topBullish.map(d => `${d.ticker} (${d.bullishCount})`).join(', ')} &nbsp;|&nbsp;\n  <strong>Top BEARISH:</strong> ${topBearish.map(d => `${d.ticker} (${d.bearishCount})`).join(', ')}\n</div>\n\n<div style=\"overflow-x:auto;\">\n<table style=\"width:100%; border-collapse:collapse; font-size:12px;\">\n  <thead>\n    <tr style=\"background:#8e44ad; color:white;\">\n      <th style=\"padding:8px; text-align:left;\">Spółka</th>\n      <th style=\"padding:8px; text-align:right;\">Kurs</th>\n      <th style=\"padding:8px; text-align:center;\">RSI</th>\n      <th style=\"padding:8px; text-align:center;\">MACD</th>\n      <th style=\"padding:8px;\">SMA</th>\n      <th style=\"padding:8px;\">S/R</th>\n      <th style=\"padding:8px; text-align:center;\">Vol</th>\n      <th style=\"padding:8px;\">Sygnały</th>\n      <th style=\"padding:8px;\">Ocena AI</th>\n    </tr>\n  </thead>\n  <tbody>${rows}</tbody>\n</table>\n</div>\n\n<hr style=\"margin-top:24px;\">\n<p style=\"color:#bbb; font-size:11px;\">\n  n8n TA Agent | Dane: Stooq.com | Analiza: Claude Sonnet | RSI(14) MACD(12,26,9) SMA(20,50) Vol(20)\n</p>\n</body></html>\n`;\n\nreturn [{ json: { html, count: taItems.length } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        -448
+      ],
+      "id": "08a7f0b5-b114-4521-a12c-f3f6d5dea6b6",
+      "name": "Formatuj HTML"
+    },
+    {
+      "parameters": {
+        "sendTo": "jacek.maszota@gmail.com",
+        "subject": "=📐 TA GPW — {{ $now.format('dd.MM.yyyy') }}",
+        "message": "={{ $json.html }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        832,
+        -448
+      ],
+      "id": "c245259d-1b58-44d1-9183-723a1e12204b",
+      "name": "Send a message",
+      "webhookId": "84cff971-1de1-474a-beb4-fcfa83c64844",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "FDzHFgkF7UtF1zFW",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Lista spółek",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lista spółek": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsuj CSV + Oblicz wskaźniki": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Przygotuj prompt": {
+      "main": [
+        [
+          {
+            "node": "Cloude Sonnet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Przygotuj prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Przygotuj URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stooq CSV": {
+      "main": [
+        [
+          {
+            "node": "Parsuj CSV + Oblicz wskaźniki",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Przygotuj URL": {
+      "main": [
+        [
+          {
+            "node": "Stooq CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cloude Sonnet": {
+      "main": [
+        [
+          {
+            "node": "Formatuj HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatuj HTML": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "629efbe1-0300-432e-8913-7a21b0f881b8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "aa47a6072b31783d110737f20a24e70688ccc8dc522cf419aa8d709d2bd88407"
+  },
+  "id": "OjPCcijsj41KIKil",
+  "tags": []
+}
